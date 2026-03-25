@@ -22,6 +22,7 @@ from agents.logistics import LogisticsAgent
 from agents.mt10_calculator import MT10Calculator
 from agents.macro_geopolitics import MacroGeopoliticsAgent
 from agents.ride_scout import RideScoutAgent
+from agents.space_watch import SpaceWatchAgent
 from agents.claude_advisor import _build_context, SYSTEM_PROMPT
 
 # ─── Page Config ─────────────────────────────────────────────────────────────
@@ -162,6 +163,11 @@ def run_analysis():
         log("🌤️", "RideScout", f"✓ day score {ride['overall_day_score']:.0f}/100")
         traces.append({"agent": "RideScout", "event": "agent_complete", "data": ride})
 
+        log("🚀", "SpaceWatch", "tracking ISS position & moon phase…")
+        space = run(SpaceWatchAgent().get_space_watch())
+        log("🚀", "SpaceWatch", f"✓ {space['moon']['emoji']} {space['moon']['phase_name']} · stargazing {space['stargazing_score']}/100")
+        traces.append({"agent": "SpaceWatch", "event": "agent_complete", "data": space})
+
         # ── Solar chain ───────────────────────────────────────────────────
         log("🔋", "BatteryManager", "calculating storage strategy…")
         battery = run(BatteryManager().get_strategy(solar["forecast_yield_kwh_today"]))
@@ -192,7 +198,7 @@ def run_analysis():
         # ── Claude synthesis ───────────────────────────────────────────────
         full = dict(solar=solar, battery=battery, grid=grid,
                     fuel_pumps=pumps, best_pump=best_pump,
-                    route=route, decision=decision, macro=macro, ride=ride)
+                    route=route, decision=decision, macro=macro, ride=ride, space=space)
         ctx = _build_context(full)
         ctx_hash = hashlib.md5(ctx.encode()).hexdigest()
         _SYNTHESIS_TTL_SECS = 3600  # 60 min
@@ -376,7 +382,8 @@ def agent_flow_graph(agent_states: dict):
 
     nodes = {
         "Orchestrator":     (0.50, 0.55),
-        "RideScout":        (0.50, 1.00),
+        "RideScout":        (0.27, 1.00),
+        "SpaceWatch":       (0.73, 1.00),
         "SolarAnalyst":     (0.05, 0.85),
         "BatteryManager":   (0.05, 0.55),
         "GridArbitrage":    (0.05, 0.25),
@@ -391,6 +398,7 @@ def agent_flow_graph(agent_states: dict):
         ("Orchestrator", "FuelScout"),
         ("Orchestrator", "MacroGeopolitics"),
         ("Orchestrator", "RideScout"),
+        ("Orchestrator", "SpaceWatch"),
         ("SolarAnalyst",  "BatteryManager"),
         ("BatteryManager","GridArbitrage"),
         ("FuelScout",     "Logistics"),
@@ -401,7 +409,7 @@ def agent_flow_graph(agent_states: dict):
         "Orchestrator": "🎯", "SolarAnalyst": "☀️", "BatteryManager": "🔋",
         "GridArbitrage": "⚡", "FuelScout": "⛽", "Logistics": "🗺️",
         "MT10Calculator": "🏍️", "MacroGeopolitics": "🌐", "RideScout": "🌤️",
-        "ClaudeAdvisor": "🧠",
+        "ClaudeAdvisor": "🧠", "SpaceWatch": "🚀",
     }
 
     def node_color(name):
@@ -533,13 +541,14 @@ st.divider()
 
 # ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-tab_overview, tab_solar, tab_fuel, tab_ride, tab_flow, tab_chat, tab_trace = st.tabs([
+tab_chat, tab_overview, tab_solar, tab_fuel, tab_ride, tab_space, tab_flow, tab_trace = st.tabs([
+    "💬 Chat",
     "🏠 Overview",
     "☀️ Solar & Grid",
     "⛽ Fuel Run",
     "🏍️ Riding",
+    "🚀 Space Watch",
     "🤖 Agent Flow",
-    "💬 Chat",
     "📋 Trace",
 ])
 
@@ -766,7 +775,63 @@ with tab_ride:
                 st.dataframe(df, hide_index=True, use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 5: AGENT FLOW GRAPH
+# TAB 5: SPACE WATCH
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_space:
+    if r is None:
+        st.info("Run analysis first.", icon="ℹ️")
+    else:
+        sp    = r.get("space", {})
+        iss   = sp.get("iss", {})
+        moon  = sp.get("moon", {})
+        score = sp.get("stargazing_score", 0)
+
+        col_left, col_right = st.columns([1, 1])
+
+        with col_left:
+            st.markdown("### 🌙 Moon Phase")
+            st.markdown(f"## {moon.get('emoji', '')} {moon.get('phase_name', '')}")
+            illum = moon.get("illumination_pct", 0)
+            st.progress(int(illum) / 100, text=f"{illum:.0f}% illuminated · Day {moon.get('phase_day', 0):.0f} of 29.5")
+
+            st.write("")
+            st.markdown("### 🔭 Stargazing Score")
+            if score >= 75:
+                st.success(f"### {score}/100 — Excellent")
+            elif score >= 50:
+                st.warning(f"### {score}/100 — Good")
+            elif score >= 30:
+                st.info(f"### {score}/100 — Moderate")
+            else:
+                st.error(f"### {score}/100 — Poor")
+
+            st.write("")
+            st.markdown(f"**{sp.get('recommendation', '')}**")
+            if sp.get("data_source") == "fallback":
+                st.caption("⚠️ ISS position from fallback data — wheretheiss.at unavailable")
+
+        with col_right:
+            st.markdown("### 🛸 ISS Live Position")
+            vis = iss.get("visible_now", False)
+            if vis:
+                st.success("**ISS is potentially visible from your backyard right now!**")
+            else:
+                st.info("ISS is not currently in your sky.")
+
+            st.write("")
+            i1, i2 = st.columns(2)
+            i1.metric("Altitude",    f"{iss.get('altitude_km', 0):.0f} km")
+            i2.metric("Speed",       f"{iss.get('velocity_kmh', 0):,.0f} km/h")
+            i3, i4 = st.columns(2)
+            i3.metric("Distance",    f"{iss.get('distance_from_home_km', 0):,} km")
+            i4.metric("Elevation",   f"{iss.get('elevation_deg', 0):.1f}°")
+
+            st.write("")
+            st.markdown(f"**ISS position:** {iss.get('latitude', 0):.2f}°, {iss.get('longitude', 0):.2f}°")
+            st.caption("Refresh analysis to update ISS position (orbits every ~90 min)")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 6: AGENT FLOW GRAPH
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_flow:
     # Build agent_states from traces
@@ -796,6 +861,7 @@ with tab_flow:
             ("🏍️ MT-10 Calc",      "Detour profitability"),
             ("🌐 Macro & FX",      "Brent Crude / AUD"),
             ("🌤️ Ride Scout",      "Weather ride scorer"),
+            ("🚀 SpaceWatch",      "ISS + moon phase"),
             ("🧠 Claude Advisor",  "LLM synthesis"),
         ]
         for label, desc in agents_info:

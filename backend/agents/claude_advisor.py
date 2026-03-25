@@ -33,14 +33,17 @@ When asked for a recommendation, give a clear YES/NO/WAIT answer first, then exp
 
 def _build_context(analysis: dict) -> str:
     """Convert the analysis result dict into a compact context block for Claude."""
-    solar = analysis.get("solar", {})
-    battery = analysis.get("battery", {})
-    grid = analysis.get("grid", {})
+    solar     = analysis.get("solar", {})
+    battery   = analysis.get("battery", {})
+    grid      = analysis.get("grid", {})
     best_pump = analysis.get("best_pump", {})
-    decision = analysis.get("decision", {})
-    macro = analysis.get("macro", {})
-    ride = analysis.get("ride", {})
-    route = analysis.get("route", {})
+    decision  = analysis.get("decision", {})
+    macro     = analysis.get("macro", {})
+    ride      = analysis.get("ride", {})
+    route     = analysis.get("route", {})
+    space     = analysis.get("space", {})
+    moon      = space.get("moon", {}) if space else {}
+    iss       = space.get("iss", {}) if space else {}
 
     return f"""
 === CURRENT AGENT DATA ===
@@ -81,6 +84,13 @@ RIDE CONDITIONS:
 - Day score: {ride.get('overall_day_score')}/100
 - Best window: {ride.get('best_window_start')}:00 – {(ride.get('best_window_start') or 0) + 2}:00
 - Recommendation: {ride.get('recommendation')}
+
+SPACE WATCH:
+- Moon: {moon.get('emoji', '')} {moon.get('phase_name')} ({moon.get('illumination_pct')}% illuminated)
+- ISS distance from home: {iss.get('distance_from_home_km')} km  |  elevation: {iss.get('elevation_deg')}°
+- ISS visible now: {iss.get('visible_now')}
+- Stargazing score: {space.get('stargazing_score')}/100
+- Recommendation: {space.get('recommendation')}
 """.strip()
 
 

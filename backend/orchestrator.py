@@ -25,6 +25,7 @@ from agents.mt10_calculator import MT10Calculator
 from agents.macro_geopolitics import MacroGeopoliticsAgent
 from agents.ride_scout import RideScoutAgent
 from agents.grid_arbitrage import GridArbitrageAgent
+from agents.space_watch import SpaceWatchAgent
 
 
 def _now() -> str:
@@ -70,25 +71,28 @@ class AustralOrchestrator:
         """
         await self._emit("workflow_start", "Orchestrator", {"message": "Analysis starting…"})
 
-        # ── Concurrent: solar + macro + ride (no dependencies) ──────────────
+        # ── Concurrent: solar + macro + ride + space (no dependencies) ─────
         await self._emit("agent_start", "SolarAnalyst", {})
         await self._emit("agent_start", "MacroGeopolitics", {})
         await self._emit("agent_start", "RideScout", {})
         await self._emit("agent_start", "FuelScout", {})
+        await self._emit("agent_start", "SpaceWatch", {})
 
         solar_task = asyncio.create_task(SolarAnalyst().get_solar_forecast())
         macro_task = asyncio.create_task(MacroGeopoliticsAgent().get_market_context())
-        ride_task = asyncio.create_task(RideScoutAgent().get_ride_window())
-        fuel_task = asyncio.create_task(FuelScoutAgent().get_cheapest_p98())
+        ride_task  = asyncio.create_task(RideScoutAgent().get_ride_window())
+        fuel_task  = asyncio.create_task(FuelScoutAgent().get_cheapest_p98())
+        space_task = asyncio.create_task(SpaceWatchAgent().get_space_watch())
 
-        solar, macro, ride, pumps = await asyncio.gather(
-            solar_task, macro_task, ride_task, fuel_task
+        solar, macro, ride, pumps, space = await asyncio.gather(
+            solar_task, macro_task, ride_task, fuel_task, space_task
         )
 
         await self._emit("agent_complete", "SolarAnalyst", solar)
         await self._emit("agent_complete", "MacroGeopolitics", macro)
         await self._emit("agent_complete", "RideScout", ride)
         await self._emit("agent_complete", "FuelScout", pumps)
+        await self._emit("agent_complete", "SpaceWatch", space)
 
         # ── Battery strategy (depends on solar) ─────────────────────────────
         await self._emit("handoff", "SolarAnalyst", solar["forecast_yield_kwh_today"], target="BatteryManager")
@@ -132,6 +136,7 @@ class AustralOrchestrator:
             "decision": decision,
             "macro": macro,
             "ride": ride,
+            "space": space,
         }
 
         # ── ClaudeAdvisor: LLM synthesis of all agent outputs ────────────────

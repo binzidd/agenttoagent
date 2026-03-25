@@ -1,0 +1,21 @@
+version: 1.0
+
+# AWS App Runner service configuration for the Austral Agent Stack dashboard.
+# Deploy from ECR image built with Dockerfile.streamlit
+#
+# Usage:
+#   1. Build & push:  ./deploy.sh
+#   2. First deploy:  aws apprunner create-service --cli-input-yaml file://apprunner.yaml
+#   3. Updates:       ./deploy.sh  (triggers auto-deployment via ECR push)
+
+Runtime:
+  Port: "8501"
+
+# Health check – App Runner pings this every 10 s
+HealthCheckConfiguration:
+  Protocol: HTTP
+  Path: /healthz
+  Interval: 10
+  Timeout: 5
+  HealthyThreshold: 1
+  UnhealthyThreshold: 5
