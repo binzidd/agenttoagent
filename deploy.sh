@@ -1,103 +1,230 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# deploy.sh – Build and push the Streamlit dashboard to AWS App Runner via ECR.
+# deploy.sh – Build, push, and deploy the Austral Agent Stack to AWS.
+#
+# Two deployment targets:
+#
+#   ./deploy.sh dashboard     – Streamlit UI → AWS App Runner (port 8501)
+#                               Uses Dockerfile.streamlit
+#
+#   ./deploy.sh agentcore     – Backend agents → AWS Bedrock AgentCore (port 8080)
+#                               Uses Dockerfile
+#
+#   ./deploy.sh all           – Both targets
 #
 # Prerequisites:
-#   - AWS CLI configured  (aws configure)
-#   - Docker running
-#   - jq installed        (brew install jq)
+#   - AWS CLI v2 configured  (aws configure)
+#   - Docker Desktop running
+#   - jq installed           (brew install jq)
 #
-# First-time setup:
-#   export AWS_REGION=ap-southeast-2      # Sydney
+# Environment (defaults to Sydney region):
+#   export AWS_REGION=ap-southeast-2
 #   export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-#   ./deploy.sh --create          # create App Runner service on first run
-#
-# Subsequent deploys:
-#   ./deploy.sh                   # build → push → App Runner auto-deploys
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-# ── Config ───────────────────────────────────────────────────────────────────
-APP_NAME="austral-dashboard"
+TARGET="${1:-all}"
+
 AWS_REGION="${AWS_REGION:-ap-southeast-2}"
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
-ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${APP_NAME}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+ECR_BASE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-info()  { echo "→ $*"; }
+DASHBOARD_NAME="austral-dashboard"
+AGENTCORE_NAME="austral-agentcore"
+
+info()  { echo "▶ $*"; }
+ok()    { echo "✓ $*"; }
 error() { echo "✗ $*" >&2; exit 1; }
 
-# ── 1. Authenticate Docker → ECR ─────────────────────────────────────────────
-info "Logging in to ECR (${AWS_REGION})…"
-aws ecr get-login-password --region "${AWS_REGION}" \
-  | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
-# ── 2. Create ECR repo if it doesn't exist ────────────────────────────────────
-if ! aws ecr describe-repositories --repository-names "${APP_NAME}" \
-       --region "${AWS_REGION}" &>/dev/null; then
-  info "Creating ECR repository '${APP_NAME}'…"
-  aws ecr create-repository --repository-name "${APP_NAME}" \
+# ── Helper: ensure ECR repo exists ───────────────────────────────────────────
+ensure_ecr_repo() {
+  local name="$1"
+  if ! aws ecr describe-repositories --repository-names "${name}" \
+         --region "${AWS_REGION}" &>/dev/null; then
+    info "Creating ECR repository '${name}'…"
+    aws ecr create-repository \
+      --repository-name "${name}" \
       --region "${AWS_REGION}" \
       --image-scanning-configuration scanOnPush=true \
-      --encryption-configuration encryptionType=AES256
-fi
+      --encryption-configuration encryptionType=AES256 >/dev/null
+    ok "Created ${name}"
+  fi
+}
 
-# ── 3. Build ──────────────────────────────────────────────────────────────────
-info "Building image (Dockerfile.streamlit)…"
-docker build \
-  --platform linux/amd64 \
-  -f Dockerfile.streamlit \
-  -t "${APP_NAME}:${IMAGE_TAG}" \
-  -t "${ECR_REPO}:${IMAGE_TAG}" \
-  .
+# ── Helper: ECR login ────────────────────────────────────────────────────────
+ecr_login() {
+  info "Authenticating Docker → ECR (${AWS_REGION})…"
+  aws ecr get-login-password --region "${AWS_REGION}" \
+    | docker login --username AWS --password-stdin "${ECR_BASE}"
+  ok "Logged in"
+}
 
-# ── 4. Push ───────────────────────────────────────────────────────────────────
-info "Pushing to ECR → ${ECR_REPO}:${IMAGE_TAG}"
-docker push "${ECR_REPO}:${IMAGE_TAG}"
+# ── Helper: read a value from backend/.env ───────────────────────────────────
+env_val() {
+  grep "^${1}=" backend/.env 2>/dev/null | cut -d= -f2- || echo ""
+}
 
-# ── 5. Create or update App Runner service ────────────────────────────────────
-SERVICE_ARN=$(aws apprunner list-services --region "${AWS_REGION}" \
-  --query "ServiceSummaryList[?ServiceName=='${APP_NAME}'].ServiceArn" \
-  --output text 2>/dev/null || true)
+# ═════════════════════════════════════════════════════════════════════════════
+# TARGET: dashboard (Streamlit → App Runner)
+# ═════════════════════════════════════════════════════════════════════════════
+deploy_dashboard() {
+  info "=== DASHBOARD → App Runner ==="
 
-if [[ -z "${SERVICE_ARN}" ]] || [[ "${1:-}" == "--create" ]]; then
-  info "Creating App Runner service '${APP_NAME}'…"
-  # Read secrets from local .env (never baked into the image)
-  ANTHROPIC_KEY=$(grep '^ANTHROPIC_API_KEY=' backend/.env 2>/dev/null | cut -d= -f2 || echo "")
-  FUEL_KEY=$(grep '^NSW_FUELCHECK_API_KEY=' backend/.env 2>/dev/null | cut -d= -f2 || echo "")
-  FUEL_SECRET=$(grep '^NSW_FUELCHECK_API_SECRET=' backend/.env 2>/dev/null | cut -d= -f2 || echo "")
+  local repo="${ECR_BASE}/${DASHBOARD_NAME}"
+  ensure_ecr_repo "${DASHBOARD_NAME}"
 
-  aws apprunner create-service \
+  info "Building Dockerfile.streamlit (linux/amd64)…"
+  docker build \
+    --platform linux/amd64 \
+    -f Dockerfile.streamlit \
+    -t "${DASHBOARD_NAME}:latest" \
+    -t "${repo}:latest" \
+    .
+
+  info "Pushing to ECR…"
+  docker push "${repo}:latest"
+  ok "Pushed ${repo}:latest"
+
+  # Create or update App Runner service
+  local svc_arn
+  svc_arn=$(aws apprunner list-services \
     --region "${AWS_REGION}" \
-    --service-name "${APP_NAME}" \
-    --source-configuration "{
-      \"ImageRepository\": {
-        \"ImageIdentifier\": \"${ECR_REPO}:${IMAGE_TAG}\",
-        \"ImageRepositoryType\": \"ECR\",
-        \"ImageConfiguration\": {
-          \"Port\": \"8501\",
-          \"RuntimeEnvironmentVariables\": {
-            \"ANTHROPIC_API_KEY\": \"${ANTHROPIC_KEY}\",
-            \"NSW_FUELCHECK_API_KEY\": \"${FUEL_KEY}\",
-            \"NSW_FUELCHECK_API_SECRET\": \"${FUEL_SECRET}\"
+    --query "ServiceSummaryList[?ServiceName=='${DASHBOARD_NAME}'].ServiceArn" \
+    --output text 2>/dev/null || true)
+
+  if [[ -z "${svc_arn}" ]]; then
+    info "Creating App Runner service '${DASHBOARD_NAME}'…"
+    local url
+    url=$(aws apprunner create-service \
+      --region "${AWS_REGION}" \
+      --service-name "${DASHBOARD_NAME}" \
+      --source-configuration "{
+        \"ImageRepository\": {
+          \"ImageIdentifier\": \"${repo}:latest\",
+          \"ImageRepositoryType\": \"ECR\",
+          \"ImageConfiguration\": {
+            \"Port\": \"8501\",
+            \"RuntimeEnvironmentVariables\": {
+              \"ANTHROPIC_API_KEY\":        \"$(env_val ANTHROPIC_API_KEY)\",
+              \"NSW_FUELCHECK_API_KEY\":    \"$(env_val NSW_FUELCHECK_API_KEY)\",
+              \"NSW_FUELCHECK_API_SECRET\": \"$(env_val NSW_FUELCHECK_API_SECRET)\"
+            }
           }
-        }
-      },
-      \"AutoDeploymentsEnabled\": true
-    }" \
-    --instance-configuration '{"Cpu":"1 vCPU","Memory":"2 GB"}' \
-    --health-check-configuration '{"Protocol":"HTTP","Path":"/_stcore/health","Interval":10,"Timeout":5}' \
-    | jq -r '.Service.ServiceUrl'
-  info "Service created! URL above ↑"
+        },
+        \"AutoDeploymentsEnabled\": true
+      }" \
+      --instance-configuration '{"Cpu":"1 vCPU","Memory":"2 GB"}' \
+      --health-check-configuration '{"Protocol":"HTTP","Path":"/_stcore/health","Interval":10,"Timeout":5,"HealthyThreshold":1,"UnhealthyThreshold":5}' \
+      | jq -r '.Service.ServiceUrl')
+    ok "Dashboard live at: https://${url}"
+  else
+    info "Triggering deployment on existing service…"
+    aws apprunner start-deployment \
+      --region "${AWS_REGION}" \
+      --service-arn "${svc_arn}" >/dev/null
+    local url
+    url=$(aws apprunner describe-service \
+      --region "${AWS_REGION}" \
+      --service-arn "${svc_arn}" \
+      | jq -r '.Service.ServiceUrl')
+    ok "Deployment triggered: https://${url}"
+  fi
+}
 
-else
-  info "Triggering deployment on existing service (${SERVICE_ARN})…"
-  aws apprunner start-deployment \
+# ═════════════════════════════════════════════════════════════════════════════
+# TARGET: agentcore (Backend → AWS Bedrock AgentCore)
+# ═════════════════════════════════════════════════════════════════════════════
+deploy_agentcore() {
+  info "=== BACKEND → Bedrock AgentCore ==="
+
+  local repo="${ECR_BASE}/${AGENTCORE_NAME}"
+  ensure_ecr_repo "${AGENTCORE_NAME}"
+
+  info "Building Dockerfile (linux/amd64)…"
+  docker build \
+    --platform linux/amd64 \
+    -f Dockerfile \
+    -t "${AGENTCORE_NAME}:latest" \
+    -t "${repo}:latest" \
+    .
+
+  info "Pushing to ECR…"
+  docker push "${repo}:latest"
+  ok "Pushed ${repo}:latest"
+
+  # Create or update Bedrock AgentCore agent runtime
+  # AgentCore requires an IAM role with bedrock:InvokeModel + ecr:* permissions
+  local runtime_arn=""
+  runtime_arn=$(aws bedrock-agentcore list-agent-runtimes \
     --region "${AWS_REGION}" \
-    --service-arn "${SERVICE_ARN}"
-  info "Deployment triggered. Check status:"
-  echo "  aws apprunner describe-service --service-arn '${SERVICE_ARN}' --region '${AWS_REGION}' --query 'Service.Status'"
-fi
+    --query "agentRuntimes[?agentRuntimeName=='${AGENTCORE_NAME}'].agentRuntimeArn" \
+    --output text 2>/dev/null || true)
 
-info "Done."
+  if [[ -z "${runtime_arn}" ]]; then
+    info "Creating AgentCore runtime '${AGENTCORE_NAME}'…"
+    info "NOTE: Set AGENTCORE_ROLE_ARN to your IAM role ARN before first deploy."
+    info "      Role needs: AmazonBedrockAgentCoreExecutionPolicy + ECR pull permissions"
+    ROLE_ARN="${AGENTCORE_ROLE_ARN:-}"
+    if [[ -z "${ROLE_ARN}" ]]; then
+      echo ""
+      echo "  export AGENTCORE_ROLE_ARN=arn:aws:iam::${AWS_ACCOUNT_ID}:role/AustralAgentCoreRole"
+      echo "  ./deploy.sh agentcore"
+      echo ""
+      error "AGENTCORE_ROLE_ARN not set — cannot create runtime."
+    fi
+
+    aws bedrock-agentcore create-agent-runtime \
+      --region "${AWS_REGION}" \
+      --agent-runtime-name "${AGENTCORE_NAME}" \
+      --agent-runtime-artifact "{
+        \"containerConfiguration\": {
+          \"containerUri\": \"${repo}:latest\"
+        }
+      }" \
+      --network-configuration '{"networkMode":"PUBLIC"}' \
+      --execution-role-arn "${ROLE_ARN}" \
+      --environment-variables "{
+        \"ANTHROPIC_API_KEY\":        \"$(env_val ANTHROPIC_API_KEY)\",
+        \"NSW_FUELCHECK_API_KEY\":    \"$(env_val NSW_FUELCHECK_API_KEY)\",
+        \"NSW_FUELCHECK_API_SECRET\": \"$(env_val NSW_FUELCHECK_API_SECRET)\"
+      }" | jq '{agentRuntimeArn, status}'
+    ok "AgentCore runtime created."
+  else
+    info "Updating existing AgentCore runtime (${runtime_arn})…"
+    aws bedrock-agentcore update-agent-runtime \
+      --region "${AWS_REGION}" \
+      --agent-runtime-id "${runtime_arn##*/}" \
+      --agent-runtime-artifact "{
+        \"containerConfiguration\": {
+          \"containerUri\": \"${repo}:latest\"
+        }
+      }" | jq '{agentRuntimeArn, status}'
+    ok "AgentCore runtime updated."
+  fi
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Main
+# ═════════════════════════════════════════════════════════════════════════════
+case "${TARGET}" in
+  dashboard)
+    ecr_login
+    deploy_dashboard
+    ;;
+  agentcore)
+    ecr_login
+    deploy_agentcore
+    ;;
+  all)
+    ecr_login
+    deploy_dashboard
+    echo ""
+    deploy_agentcore
+    ;;
+  *)
+    echo "Usage: ./deploy.sh [dashboard|agentcore|all]"
+    exit 1
+    ;;
+esac
+
+ok "Done."
