@@ -126,7 +126,7 @@ deploy_dashboard() {
     info "Creating security group for port 8501…"
     sg_id=$(aws ec2 create-security-group \
       --group-name "austral-dashboard-sg" \
-      --description "Austral Streamlit dashboard – port 8501" \
+      --description "Austral Streamlit dashboard port 8501" \
       --vpc-id "${DEFAULT_VPC}" \
       --region "${AWS_REGION}" \
       --query "GroupId" --output text)
