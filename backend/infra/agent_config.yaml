@@ -1,0 +1,75 @@
+agentName: AustralHomeMobilityCrew
+version: "2.0"
+description: >
+  Multi-agent cost-optimisation system for an Austral, NSW household.
+  Manages a 9 kWh SolarEdge Nexis home battery and a Yamaha MT-10 motorcycle.
+
+agents:
+  solar_analyst:
+    description: Fetches live solar irradiance and calculates daily kWh yield.
+    api: Open-Meteo (free, no key required)
+    outputs: [forecast_yield_kwh_today, peak_generation_hour, status]
+
+  battery_manager:
+    description: Determines grid export vs storage strategy from solar forecast.
+    depends_on: [solar_analyst]
+    outputs: [mode, excess_solar_kwh, estimated_battery_fill_pct]
+
+  grid_arbitrage:
+    description: >
+      Fetches live NSW NEM spot price and advises EXPORT / STORE / CONSUME
+      to maximise value from the rooftop solar system.
+    api: AEMO public data (no key required)
+    depends_on: [battery_manager]
+    outputs: [recommended_action, nem_spot_cents_kwh, estimated_value_cents_kwh]
+
+  fuel_scout:
+    description: Finds cheapest Premium 98 fuel within 20 km.
+    api: NSW FuelCheck API (optional key) / synthetic fallback
+    outputs: [stations list with price + coordinates]
+
+  logistics:
+    description: Calculates riding distance from home to target fuel station.
+    api: OSRM open routing (free, no key required)
+    depends_on: [fuel_scout]
+    outputs: [distance_km, duration_min, round_trip_km]
+
+  mt10_calculator:
+    description: >
+      Determines if a detour to a cheaper pump is profitable after accounting
+      for the fuel burnt by the MT-10 during the detour.
+    depends_on: [fuel_scout, logistics]
+    outputs: [net_profit, profitable, logic]
+
+  macro_geopolitics:
+    description: >
+      Fetches live Brent Crude oil price and AUD/USD via Yahoo Finance.
+      Derives a buy-now vs wait-48h sentiment for pump prices.
+    api: Yahoo Finance via yfinance (free, no key required)
+    outputs: [crude_trend, recommendation, brent_crude_usd]
+
+  ride_scout:
+    description: >
+      NEW – scores every hour of the day (0–100) for motorcycle riding
+      suitability based on temperature, wind, rain probability and cloud cover.
+    api: Open-Meteo (free, no key required)
+    outputs: [overall_day_score, best_window_start, recommendation]
+
+  grid_arbitrage:
+    description: >
+      NEW – live NEM electricity spot price arbitrage. Tells you whether to
+      export solar, store in battery, or self-consume for maximum value.
+    api: AEMO public data (free, no key required)
+    outputs: [recommended_action, nem_spot_cents_kwh, reason]
+
+workflow:
+  concurrent:
+    - solar_analyst
+    - macro_geopolitics
+    - ride_scout
+    - fuel_scout
+  sequential_after_concurrent:
+    - battery_manager      # depends on solar_analyst
+    - grid_arbitrage       # depends on battery_manager
+    - logistics            # depends on fuel_scout
+    - mt10_calculator      # depends on logistics + fuel_scout
