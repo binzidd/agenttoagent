@@ -46,7 +46,8 @@ class GridArbitrageAgent:
                         "source": "live_aemo",
                     }
         except Exception as exc:
-            pass  # fall through to TOU estimate
+            import logging
+            logging.getLogger(__name__).warning("GridArbitrage: AEMO error (%s) – using TOU estimate", exc)
 
         return self._tou_estimate()
 

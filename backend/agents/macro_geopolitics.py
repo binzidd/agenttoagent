@@ -50,7 +50,8 @@ class MacroGeopoliticsAgent:
                 "source": "live",
             }
         except Exception as exc:
-            # Graceful fallback – use last-known typical values
+            import logging
+            logging.getLogger(__name__).warning("MacroGeopolitics: yfinance error (%s) – using fallback", exc)
             return {
                 "brent_usd": 82.5,
                 "brent_prev_usd": 81.9,
