@@ -340,10 +340,9 @@ def ride_chart(ride):
             "<extra></extra>"
         ),
     ))
-    fig.update_layout(
-        **base_layout("🏍️ Hourly Ride Score", height=240),
-        yaxis=dict(range=[0, 110], gridcolor=GRID_COLOR),
-    )
+    layout = base_layout("🏍️ Hourly Ride Score", height=240)
+    layout["yaxis"].update(range=[0, 110])
+    fig.update_layout(**layout)
     return fig
 
 
@@ -597,10 +596,10 @@ with tab_overview:
         # ── Mini charts row ───────────────────────────────────────────────
         col_s, col_f = st.columns(2)
         with col_s:
-            st.plotly_chart(solar_chart(r["solar"]), use_container_width=True, config={"displayModeBar": False}, key="solar_overview")
+            st.plotly_chart(solar_chart(r["solar"]), width="stretch", config={"displayModeBar": False}, key="solar_overview")
         with col_f:
             st.plotly_chart(fuel_chart(r["fuel_pumps"], r["best_pump"]),
-                            use_container_width=True, config={"displayModeBar": False}, key="fuel_overview")
+                            width="stretch", config={"displayModeBar": False}, key="fuel_overview")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2: SOLAR & GRID
@@ -612,7 +611,7 @@ with tab_solar:
         col_a, col_b = st.columns([2, 1])
 
         with col_a:
-            st.plotly_chart(solar_chart(r["solar"]), use_container_width=True,
+            st.plotly_chart(solar_chart(r["solar"]), width="stretch",
                             config={"displayModeBar": False}, key="solar_tab")
 
             # Solar details table
@@ -627,7 +626,7 @@ with tab_solar:
         with col_b:
             st.markdown("#### Battery Strategy")
             st.plotly_chart(battery_gauge(r["battery"]["estimated_battery_fill_pct"]),
-                            use_container_width=True, config={"displayModeBar": False}, key="battery_tab")
+                            width="stretch", config={"displayModeBar": False}, key="battery_tab")
 
             bat = r["battery"]
             mode_color = {"GRID_EXPORT": "green", "SOLAR_SOAK": "orange", "PRESERVE": "blue"}
@@ -657,7 +656,7 @@ with tab_fuel:
 
         with col_left:
             st.plotly_chart(fuel_chart(r["fuel_pumps"], r["best_pump"]),
-                            use_container_width=True, config={"displayModeBar": False}, key="fuel_tab")
+                            width="stretch", config={"displayModeBar": False}, key="fuel_tab")
 
             st.markdown("#### All Stations")
             sorted_pumps = sorted(r["fuel_pumps"], key=lambda x: x["price"])
@@ -693,7 +692,7 @@ with tab_fuel:
             mac = r["macro"]
             st.plotly_chart(
                 macro_gauge(mac["brent_crude_usd"], mac["brent_change_pct"], mac["crude_trend"]),
-                use_container_width=True, config={"displayModeBar": False}, key="macro_tab",
+                width="stretch", config={"displayModeBar": False}, key="macro_tab",
             )
             trend_icon = {"RISING": "🔺", "FALLING": "🔻", "STABLE": "➡️"}
             st.markdown(f"{trend_icon.get(mac['crude_trend'], '')} **{mac['crude_trend']}** · AUD/USD {mac['aud_usd']:.4f}")
@@ -746,7 +745,7 @@ with tab_ride:
         with col_chart:
             ride_fig = ride_chart(ride)
             if ride_fig:
-                st.plotly_chart(ride_fig, use_container_width=True, config={"displayModeBar": False}, key="ride_tab")
+                st.plotly_chart(ride_fig, width="stretch", config={"displayModeBar": False}, key="ride_tab")
 
         # Detailed hourly table
         with st.expander("Hourly details"):
@@ -781,7 +780,7 @@ with tab_flow:
 
     col_graph, col_legend = st.columns([3, 1])
     with col_graph:
-        st.plotly_chart(agent_flow_graph(states), use_container_width=True,
+        st.plotly_chart(agent_flow_graph(states), width="stretch",
                         config={"displayModeBar": False}, key="agent_flow_tab")
 
     with col_legend:

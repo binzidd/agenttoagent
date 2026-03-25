@@ -15,6 +15,7 @@ Falls back to time-varying synthetic data when:
 """
 from __future__ import annotations
 
+import base64
 import math
 import logging
 from datetime import datetime
@@ -55,15 +56,21 @@ class FuelScoutAgent:
     async def _get_token(self) -> str:
         """
         Acquire an OAuth 2.0 Bearer token from the NSW Apigee gateway.
-        The grant_type must be in the query string; the API key goes in a header.
+
+        NSW FuelCheck uses HTTP Basic Auth (Base64 of key:secret) rather than
+        a bare apikey header.  The grant_type goes in the query string per the
+        Apigee client-credentials flow.
         """
+        creds = base64.b64encode(
+            f"{settings.nsw_fuelcheck_api_key}:{settings.nsw_fuelcheck_api_secret}".encode()
+        ).decode()
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 self.TOKEN_URL,
                 params={"grant_type": "client_credentials"},
                 headers={
+                    "Authorization": f"Basic {creds}",
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "apikey": settings.nsw_fuelcheck_api_key,
                 },
             )
             resp.raise_for_status()
