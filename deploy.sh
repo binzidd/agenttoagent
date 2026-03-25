@@ -13,7 +13,31 @@ set -euo pipefail
 TARGET="${1:-all}"
 
 AWS_REGION="ap-southeast-2"
-AWS_ACCOUNT_ID="811165582660"
+
+info()  { echo "▶ $*"; }
+ok()    { echo "✓ $*"; }
+error() { echo "✗ $*" >&2; exit 1; }
+
+# Read a value from backend/.env, stripping surrounding quotes
+env_val() {
+  local raw
+  raw=$(grep "^${1}=" backend/.env 2>/dev/null | cut -d= -f2- || echo "")
+  raw="${raw%\"}"  ; raw="${raw#\"}"
+  raw="${raw%\'}"  ; raw="${raw#\'}"
+  echo "${raw}"
+}
+
+# Sensitive values are read from backend/.env (never hardcoded here).
+# Required keys: AWS_ACCOUNT_ID, AWS_DEFAULT_VPC, AWS_DEFAULT_SUBNETS
+# See backend/.env.example for the expected format.
+AWS_ACCOUNT_ID="$(env_val AWS_ACCOUNT_ID)"
+DEFAULT_VPC="$(env_val AWS_DEFAULT_VPC)"
+DEFAULT_SUBNETS="$(env_val AWS_DEFAULT_SUBNETS)"
+
+[[ -z "${AWS_ACCOUNT_ID}" ]]  && error "AWS_ACCOUNT_ID not set in backend/.env"
+[[ -z "${DEFAULT_VPC}" ]]     && error "AWS_DEFAULT_VPC not set in backend/.env"
+[[ -z "${DEFAULT_SUBNETS}" ]] && error "AWS_DEFAULT_SUBNETS not set in backend/.env"
+
 ECR_BASE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 # AgentCore runtime name must match [a-zA-Z][a-zA-Z0-9_]{0,47}
@@ -26,22 +50,6 @@ AGENTCORE_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/AustralAgentCoreRole"
 ECS_CLUSTER="austral-cluster"
 ECS_SERVICE="austral-dashboard"
 ECS_TASK_FAMILY="austral-dashboard"
-DEFAULT_VPC="vpc-080c49b38fc967a84"
-DEFAULT_SUBNETS="subnet-0cd390117e81869ea,subnet-03ed836e946a4de7a,subnet-0b8f1188e70c6efdf"
-
-info()  { echo "▶ $*"; }
-ok()    { echo "✓ $*"; }
-error() { echo "✗ $*" >&2; exit 1; }
-
-# Read a value from backend/.env, stripping surrounding quotes
-env_val() {
-  local raw
-  raw=$(grep "^${1}=" backend/.env 2>/dev/null | cut -d= -f2- || echo "")
-  # Strip leading/trailing single or double quotes
-  raw="${raw%\"}"  ; raw="${raw#\"}"
-  raw="${raw%\'}"  ; raw="${raw#\'}"
-  echo "${raw}"
-}
 
 # Build env-vars JSON safely using jq (handles special chars / quotes in values)
 build_env_json() {
