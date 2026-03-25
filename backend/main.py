@@ -21,22 +21,50 @@ AgentCore response schema:
         "result":  { ... },
         "summary": "Plain text summary (action=full_analysis only)"
     }
+
+Logs (stdout → CloudWatch /aws/bedrock-agentcore/AustralAgentCore):
+    Every agent start / complete / handoff emits a JSON line:
+    {"ts":"...","level":"INFO","event":"agent_complete","agent":"SolarAnalyst","data":{...}}
 """
 
 from __future__ import annotations
 import asyncio
+import json
+import logging
 import sys
 import os
+from datetime import datetime, timezone
 
 # Ensure local modules are importable when run inside a container
 sys.path.insert(0, os.path.dirname(__file__))
 
+# ─── Logging setup ────────────────────────────────────────────────────────────
+# Structured JSON to stdout so CloudWatch Logs Insights can query fields.
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        doc = {
+            "ts":      datetime.now(timezone.utc).isoformat(),
+            "level":   record.levelname,
+            "logger":  record.name,
+            "message": record.getMessage(),
+        }
+        # Merge any extra fields passed via logger.info(..., extra={...})
+        for key in ("event", "agent", "target", "data"):
+            if hasattr(record, key):
+                doc[key] = getattr(record, key)
+        return json.dumps(doc, default=str)
+
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(_JsonFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
+log = logging.getLogger("agentcore")
+
+# ─── AgentCore SDK ────────────────────────────────────────────────────────────
 try:
-    # Attempt to import the real AgentCore SDK (available inside container)
     from bedrock_agentcore import BedrockAgentCoreApp
     _AGENTCORE_AVAILABLE = True
 except ImportError:
-    # Graceful fallback for local testing without the SDK
     _AGENTCORE_AVAILABLE = False
     BedrockAgentCoreApp = None
 
@@ -48,28 +76,48 @@ from agents.grid_arbitrage import GridArbitrageAgent
 from agents.claude_advisor import stream_chat
 
 
+# ─── Trace emitter ────────────────────────────────────────────────────────────
+
+async def _emit_trace(event: dict) -> None:
+    """
+    Passed as send_event to AustralOrchestrator.
+    Each agent lifecycle event becomes a structured log line visible in
+    CloudWatch Logs under /aws/bedrock-agentcore/AustralAgentCore.
+    """
+    log.info(
+        "%s › %s",
+        event.get("agent", "?"),
+        event.get("event", "?"),
+        extra={
+            "event":  event.get("event"),
+            "agent":  event.get("agent"),
+            "target": event.get("target"),
+            "data":   event.get("data"),
+        },
+    )
+
+
 # ─── Handlers ────────────────────────────────────────────────────────────────
 
 async def handle_full_analysis() -> dict:
-    orchestrator = AustralOrchestrator(send_event=None)
+    log.info("invoke › full_analysis started")
+    orchestrator = AustralOrchestrator(send_event=_emit_trace)
     result = await orchestrator.run_full_analysis()
+    log.info("invoke › full_analysis complete", extra={"data": {"decision": result.get("decision", {}).get("profitable")}})
     return {
-        "status": "SUCCESS",
-        "action": "full_analysis",
-        "result": result,
+        "status":  "SUCCESS",
+        "action":  "full_analysis",
+        "result":  result,
         "summary": result.get("summary", ""),
     }
 
 
 async def handle_chat(messages: list, context: dict | None) -> dict:
-    response_parts = []
+    log.info("invoke › chat (%d messages)", len(messages))
+    parts: list[str] = []
     async for chunk in stream_chat(messages, context):
-        response_parts.append(chunk)
-    return {
-        "status": "SUCCESS",
-        "action": "chat",
-        "response": "".join(response_parts),
-    }
+        parts.append(chunk)
+    return {"status": "SUCCESS", "action": "chat", "response": "".join(parts)}
 
 
 async def handle_solar() -> dict:
@@ -92,23 +140,14 @@ async def handle_grid() -> dict:
     return {"status": "SUCCESS", "action": "grid", "result": data}
 
 
-# ─── AgentCore Entry Point ───────────────────────────────────────────────────
+# ─── Router ──────────────────────────────────────────────────────────────────
 
 async def invoke(payload: dict) -> dict:
-    """
-    Main handler – called by AgentCore for every invocation.
-
-    Supports both:
-      - Structured: {"action": "full_analysis"}
-      - Natural language: {"prompt": "Should I fill up today?"}
-        (routes to full_analysis + Claude summary)
-    """
     action = payload.get("action") or "full_analysis"
-
-    # Allow natural-language prompts to map to full_analysis
     if "prompt" in payload and "action" not in payload:
         action = "full_analysis"
 
+    log.info("invoke › action=%s", action)
     try:
         if action == "full_analysis":
             return await handle_full_analysis()
@@ -128,13 +167,13 @@ async def invoke(payload: dict) -> dict:
         else:
             return {"status": "ERROR", "message": f"Unknown action: {action}"}
     except Exception as exc:
+        log.exception("invoke › unhandled error for action=%s", action)
         return {"status": "ERROR", "action": action, "message": str(exc)}
 
 
 # ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 if _AGENTCORE_AVAILABLE:
-    # Production path: wrap with BedrockAgentCoreApp
     app = BedrockAgentCoreApp()
 
     @app.entrypoint
@@ -145,11 +184,8 @@ if _AGENTCORE_AVAILABLE:
         app.run()
 
 else:
-    # Local testing path: run a single test invocation
     if __name__ == "__main__":
-        import json
-
         test_payload = {"action": "full_analysis"}
-        print("Running local test invocation…")
+        log.info("local test invocation – no AgentCore SDK")
         result = asyncio.run(invoke(test_payload))
         print(json.dumps(result, indent=2, default=str))
