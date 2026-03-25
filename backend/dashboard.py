@@ -283,15 +283,18 @@ def solar_chart(solar):
         name="Cloud %",
         yaxis="y2",
     ))
+    layout = base_layout("☀️ Solar Irradiance & Cloud Cover", height=280)
+    layout["xaxis"].update(
+        tickmode="array",
+        tickvals=list(range(0, 24, 3)),
+        ticktext=[f"{h}:00" for h in range(0, 24, 3)],
+    )
     fig.update_layout(
-        **base_layout("☀️ Solar Irradiance & Cloud Cover", height=280),
+        **layout,
         yaxis2=dict(overlaying="y", side="right", gridcolor=GRID_COLOR,
                     title=dict(text="Cloud %", font=dict(color=TEXT_COLOR)), range=[0, 100]),
         showlegend=True,
         legend=dict(orientation="h", y=1.15, x=0, font=dict(color=TEXT_COLOR)),
-        xaxis=dict(tickmode="array", tickvals=list(range(0, 24, 3)),
-                   ticktext=[f"{h}:00" for h in range(0, 24, 3)],
-                   gridcolor=GRID_COLOR),
     )
     return fig
 
@@ -310,12 +313,12 @@ def fuel_chart(pumps, best_pump):
         textposition="outside",
         textfont=dict(color=TEXT_COLOR),
     ))
-    fig.update_layout(
-        **base_layout("⛽ P98 Price Comparison ($/L)", height=240),
-        xaxis=dict(range=[min(p["price"] for p in pumps) - 0.05,
-                          max(p["price"] for p in pumps) + 0.08],
-                   gridcolor=GRID_COLOR),
+    layout = base_layout("⛽ P98 Price Comparison ($/L)", height=240)
+    layout["xaxis"].update(
+        range=[min(p["price"] for p in pumps) - 0.05,
+               max(p["price"] for p in pumps) + 0.08],
     )
+    fig.update_layout(**layout)
     return fig
 
 
