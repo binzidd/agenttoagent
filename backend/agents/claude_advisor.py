@@ -7,7 +7,9 @@ a plain-English synthesis: what does it all mean, and what should the user do?
 This is what was missing in v1 — the agents collected data but nothing
 reasoned over it with language understanding.
 """
+from __future__ import annotations
 import json
+from typing import Optional
 import anthropic
 from config import settings
 
@@ -111,7 +113,7 @@ async def synthesise(analysis: dict) -> str:
     return message.content[0].text
 
 
-async def stream_chat(messages: list[dict], analysis: dict | None):
+async def stream_chat(messages: list, analysis: Optional[dict]):
     """
     Streaming generator for the chat endpoint.
     Yields text chunks as they arrive from Claude.

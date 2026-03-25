@@ -45,7 +45,7 @@ from agents.claude_advisor import stream_chat
 
 
 class ChatRequest(BaseModel):
-    messages: list[dict]          # [{"role": "user"|"assistant", "content": "..."}]
+    messages: list          # [{"role": "user"|"assistant", "content": "..."}]
     context: Optional[dict] = None  # latest AnalysisResult, if any
 
 

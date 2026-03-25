@@ -12,12 +12,12 @@ class FuelScoutAgent:
 
     FUELCHECK_BASE = "https://api.nsw.gov.au/api/v1/fuel/prices"
 
-    async def get_cheapest_p98(self) -> list[dict]:
+    async def get_cheapest_p98(self) -> list:
         if settings.nsw_fuelcheck_api_key:
             return await self._fetch_live()
         return await self._synthetic_fallback()
 
-    async def _fetch_live(self) -> list[dict]:
+    async def _fetch_live(self) -> list:
         """Hit the real NSW FuelCheck API."""
         headers = {
             "apikey": settings.nsw_fuelcheck_api_key,
@@ -53,7 +53,7 @@ class FuelScoutAgent:
             )
         return stations
 
-    async def _synthetic_fallback(self) -> list[dict]:
+    async def _synthetic_fallback(self) -> list:
         """
         Returns plausible synthetic prices when no API key is configured.
         Prices drift using current hour as a seed to look 'live'.
