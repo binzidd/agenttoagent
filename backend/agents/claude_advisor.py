@@ -88,6 +88,10 @@ async def synthesise(analysis: dict) -> str:
     """
     Non-streaming: ask Claude for a one-paragraph executive summary
     of all agent outputs. Called at end of workflow run.
+
+    Uses Anthropic prompt caching on both the system prompt and the agent
+    context block — repeated calls with identical data hit the cache and cost
+    ~10 % of normal input token price.
     """
     if not settings.anthropic_api_key:
         return _fallback_summary(analysis)
@@ -98,17 +102,25 @@ async def synthesise(analysis: dict) -> str:
     message = await client.messages.create(
         model=MODEL,
         max_tokens=300,
-        system=SYSTEM_PROMPT,
+        system=[
+            {"type": "text", "text": SYSTEM_PROMPT,
+             "cache_control": {"type": "ephemeral"}},
+        ],
         messages=[
             {
                 "role": "user",
-                "content": (
-                    f"{context}\n\n"
-                    "Give me a 2-3 sentence executive summary of what today looks like "
-                    "across solar, fuel, riding, and the grid."
-                ),
+                "content": [
+                    {"type": "text", "text": context,
+                     "cache_control": {"type": "ephemeral"}},
+                    {"type": "text",
+                     "text": (
+                         "Give me a 2-3 sentence executive summary of what today looks like "
+                         "across solar, fuel, riding, and the grid."
+                     )},
+                ],
             }
         ],
+        extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     )
     return message.content[0].text
 
@@ -117,6 +129,10 @@ async def stream_chat(messages: list, analysis: Optional[dict]):
     """
     Streaming generator for the chat endpoint.
     Yields text chunks as they arrive from Claude.
+
+    The system prompt and agent context are marked for prompt caching so that
+    all turns after the first are charged at the cache-hit rate (~10 % of
+    normal input token price).
     """
     if not settings.anthropic_api_key:
         yield "⚠️ No ANTHROPIC_API_KEY set. Add it to backend/.env to enable chat."
@@ -124,15 +140,22 @@ async def stream_chat(messages: list, analysis: Optional[dict]):
 
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-    system = SYSTEM_PROMPT
+    system_blocks: list = [
+        {"type": "text", "text": SYSTEM_PROMPT,
+         "cache_control": {"type": "ephemeral"}},
+    ]
     if analysis:
-        system += f"\n\n{_build_context(analysis)}"
+        system_blocks.append(
+            {"type": "text", "text": _build_context(analysis),
+             "cache_control": {"type": "ephemeral"}}
+        )
 
     async with client.messages.stream(
         model=MODEL,
         max_tokens=1024,
-        system=system,
+        system=system_blocks,
         messages=messages,
+        extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     ) as stream:
         async for text in stream.text_stream:
             yield text

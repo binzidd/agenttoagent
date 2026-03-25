@@ -3,8 +3,8 @@ Austral Agent Stack – Streamlit Dashboard
 Run: cd backend && streamlit run dashboard.py
 """
 
-import sys, os, asyncio, json
-from datetime import datetime
+import sys, os, asyncio, json, hashlib
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -108,6 +108,9 @@ if "result" not in st.session_state:
     st.session_state.result = None
 if "traces" not in st.session_state:
     st.session_state.traces = []
+if "synthesis_cache" not in st.session_state:
+    # {context_hash: {"text": str, "ts": datetime}}
+    st.session_state.synthesis_cache = {}
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = [
         {"role": "assistant", "content":
@@ -187,26 +190,52 @@ def run_analysis():
         traces.append({"agent": "MT10Calculator", "event": "agent_complete", "data": decision})
 
         # ── Claude synthesis ───────────────────────────────────────────────
-        log("🧠", "ClaudeAdvisor", "synthesising with Claude…")
         full = dict(solar=solar, battery=battery, grid=grid,
                     fuel_pumps=pumps, best_pump=best_pump,
                     route=route, decision=decision, macro=macro, ride=ride)
-        if settings.anthropic_api_key:
+        ctx = _build_context(full)
+        ctx_hash = hashlib.md5(ctx.encode()).hexdigest()
+        _SYNTHESIS_TTL_SECS = 3600  # 60 min
+
+        cached = st.session_state.synthesis_cache.get(ctx_hash)
+        now_utc = datetime.now(timezone.utc)
+        if (cached and
+                (now_utc - cached["ts"]).total_seconds() < _SYNTHESIS_TTL_SECS):
+            summary = cached["text"]
+            log("🧠", "ClaudeAdvisor", "✓ summary from cache (no API call)")
+        elif settings.anthropic_api_key:
+            log("🧠", "ClaudeAdvisor", "synthesising with Claude…")
             client = Anthropic(api_key=settings.anthropic_api_key)
-            ctx = _build_context(full)
+            # Use prompt caching: system + context are static for this run,
+            # so Claude can cache them — ~90 % cost reduction on cache hits.
             msg = client.messages.create(
-                model="claude-sonnet-4-6", max_tokens=300,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content":
-                    f"{ctx}\n\nGive me a 2–3 sentence executive summary of today across solar, fuel, riding, and the grid."}],
+                model="claude-sonnet-4-6",
+                max_tokens=300,
+                system=[
+                    {"type": "text", "text": SYSTEM_PROMPT,
+                     "cache_control": {"type": "ephemeral"}},
+                ],
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": ctx,
+                         "cache_control": {"type": "ephemeral"}},
+                        {"type": "text",
+                         "text": "Give me a 2–3 sentence executive summary of today across solar, fuel, riding, and the grid."},
+                    ],
+                }],
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
             )
             summary = msg.content[0].text
+            st.session_state.synthesis_cache[ctx_hash] = {"text": summary, "ts": now_utc}
+            log("🧠", "ClaudeAdvisor", "✓ summary ready")
         else:
             summary = (
                 f"Solar forecast {solar['forecast_yield_kwh_today']} kWh ({solar['status']}). "
                 f"Fuel: {'GO to ' + best_pump['name'] if decision['profitable'] else 'STAY — not profitable'}. "
                 f"Ride score {ride['overall_day_score']:.0f}/100. Grid: {grid['recommended_action']}."
             )
+            log("🧠", "ClaudeAdvisor", "✓ fallback summary (no API key)")
         log("🧠", "ClaudeAdvisor", "✓ summary ready")
         full["summary"] = summary
         traces.append({"agent": "ClaudeAdvisor", "event": "agent_complete", "data": {"summary": summary}})
@@ -451,14 +480,27 @@ def stream_chat(messages, context):
         yield "⚠️ Set ANTHROPIC_API_KEY in backend/.env to enable chat."
         return
     client = Anthropic(api_key=settings.anthropic_api_key)
-    system = SYSTEM_PROMPT
+
+    # Build system as a list so we can mark static blocks for prompt caching.
+    # Claude caches everything up to the last cache_control marker, so the
+    # system prompt + agent context are only billed at full price on first use;
+    # subsequent chat turns in the same session cost ~10 % of normal.
+    system_blocks = [
+        {"type": "text", "text": SYSTEM_PROMPT,
+         "cache_control": {"type": "ephemeral"}},
+    ]
     if context:
-        system += "\n\n" + _build_context(context)
+        system_blocks.append(
+            {"type": "text", "text": _build_context(context),
+             "cache_control": {"type": "ephemeral"}}
+        )
+
     with client.messages.stream(
         model="claude-sonnet-4-6",
         max_tokens=1024,
-        system=system,
+        system=system_blocks,
         messages=[{"role": m["role"], "content": m["content"]} for m in messages],
+        extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     ) as stream:
         yield from stream.text_stream
 
