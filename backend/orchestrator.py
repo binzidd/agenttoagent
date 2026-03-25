@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from agents.solar_analyst import SolarAnalyst
 from agents.battery_manager import BatteryManager
+from agents.claude_advisor import synthesise as claude_synthesise
 from agents.fuel_scout import FuelScoutAgent
 from agents.logistics import LogisticsAgent
 from agents.mt10_calculator import MT10Calculator
@@ -121,13 +122,7 @@ class AustralOrchestrator:
         )
         await self._emit("agent_complete", "MT10Calculator", decision)
 
-        await self._emit(
-            "workflow_complete",
-            "Orchestrator",
-            {"decision": "GO" if decision["profitable"] else "STAY"},
-        )
-
-        return {
+        result = {
             "solar": solar,
             "battery": battery,
             "grid": grid,
@@ -138,3 +133,17 @@ class AustralOrchestrator:
             "macro": macro,
             "ride": ride,
         }
+
+        # ── ClaudeAdvisor: LLM synthesis of all agent outputs ────────────────
+        await self._emit("agent_start", "ClaudeAdvisor", {})
+        summary = await claude_synthesise(result)
+        await self._emit("agent_complete", "ClaudeAdvisor", {"summary": summary})
+
+        await self._emit(
+            "workflow_complete",
+            "Orchestrator",
+            {"decision": "GO" if decision["profitable"] else "STAY", "summary": summary},
+        )
+
+        result["summary"] = summary
+        return result

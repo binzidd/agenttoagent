@@ -5,13 +5,13 @@ import { SolarCard } from "./components/SolarCard";
 import { FuelCard } from "./components/FuelCard";
 import { RideCard } from "./components/RideCard";
 import { GridCard } from "./components/GridCard";
+import { ChatPanel } from "./components/ChatPanel";
 import { useAgentSocket } from "./hooks/useAgentSocket";
 
 export default function App() {
   const { connected, running, traces, result, agentStates, activeEdges, error, connect, runAnalysis } =
     useAgentSocket();
 
-  // Auto-connect on mount
   useEffect(() => {
     connect();
   }, [connect]);
@@ -77,60 +77,70 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── Row 2: Data cards ────────────────────────────────────────── */}
-        {result && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-              <SolarCard solar={result.solar} battery={result.battery} />
-              <FuelCard
-                pumps={result.fuel_pumps}
-                bestPump={result.best_pump}
-                route={result.route}
-                decision={result.decision}
-                macro={result.macro}
-              />
-              <RideCard ride={result.ride} />
-              <GridCard grid={result.grid} />
-            </div>
-
-            {/* ── Decision banner ──────────────────────────────────────── */}
-            <div
-              className={`rounded-2xl border px-6 py-5 flex items-center gap-4 flex-wrap ${
-                result.decision.profitable
-                  ? "bg-green-900/30 border-green-700"
-                  : "bg-gray-800/50 border-gray-700"
-              }`}
-            >
-              <span className="text-4xl">
-                {result.decision.profitable ? "🟢" : "🔴"}
-              </span>
-              <div>
-                <p className="text-xl font-bold text-white">
-                  {result.decision.profitable
-                    ? "GO – Head to " + result.best_pump.name
-                    : "STAY – Not worth the ride"}
-                </p>
-                <p className="text-sm text-gray-400 mt-0.5">{result.decision.logic}</p>
-              </div>
-              {result.decision.profitable && (
-                <div className="ml-auto text-right">
-                  <p className="text-xs text-gray-500">Net saving</p>
-                  <p className="text-2xl font-bold text-green-400">
-                    +${result.decision.net_profit.toFixed(2)}
-                  </p>
+        {/* ── Row 2: Data cards + Chat ─────────────────────────────────── */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          {/* Data cards */}
+          <div className="xl:col-span-2 space-y-6">
+            {result && (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <SolarCard solar={result.solar} battery={result.battery} />
+                  <FuelCard
+                    pumps={result.fuel_pumps}
+                    bestPump={result.best_pump}
+                    route={result.route}
+                    decision={result.decision}
+                    macro={result.macro}
+                  />
+                  <RideCard ride={result.ride} />
+                  <GridCard grid={result.grid} />
                 </div>
-              )}
-            </div>
-          </>
-        )}
 
-        {!result && !running && (
-          <div className="text-center py-20 text-gray-600">
-            <p className="text-5xl mb-4">🤖</p>
-            <p className="text-lg">Press "Run Analysis" to activate all agents</p>
-            <p className="text-sm mt-1">Watch the flow graph animate in real-time</p>
+                {/* Decision banner */}
+                <div
+                  className={`rounded-2xl border px-6 py-5 flex items-center gap-4 flex-wrap ${
+                    result.decision.profitable
+                      ? "bg-green-900/30 border-green-700"
+                      : "bg-gray-800/50 border-gray-700"
+                  }`}
+                >
+                  <span className="text-4xl">
+                    {result.decision.profitable ? "🟢" : "🔴"}
+                  </span>
+                  <div>
+                    <p className="text-xl font-bold text-white">
+                      {result.decision.profitable
+                        ? "GO – Head to " + result.best_pump.name
+                        : "STAY – Not worth the ride"}
+                    </p>
+                    <p className="text-sm text-gray-400 mt-0.5">{result.decision.logic}</p>
+                  </div>
+                  {result.decision.profitable && (
+                    <div className="ml-auto text-right">
+                      <p className="text-xs text-gray-500">Net saving</p>
+                      <p className="text-2xl font-bold text-green-400">
+                        +${result.decision.net_profit.toFixed(2)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {!result && !running && (
+              <div className="text-center py-20 text-gray-600">
+                <p className="text-5xl mb-4">🤖</p>
+                <p className="text-lg">Press "Run Analysis" to activate all agents</p>
+                <p className="text-sm mt-1">Watch the flow graph animate in real-time</p>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Chat panel – always visible, context-aware after analysis */}
+          <div className="h-[700px] xl:h-auto xl:min-h-[600px]">
+            <ChatPanel analysisResult={result} />
+          </div>
+        </div>
       </div>
     </div>
   );

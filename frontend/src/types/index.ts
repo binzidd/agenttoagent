@@ -138,4 +138,13 @@ export interface AnalysisResult {
   decision: DecisionResult;
   macro: MacroResult;
   ride: RideResult;
+  summary?: string;
+}
+
+// ─── Chat types ───────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  streaming?: boolean;
 }

@@ -26,6 +26,7 @@ const NODE_DEFS: Array<{ id: string; label: string; emoji: string; x: number; y:
   { id: "MT10Calculator",  label: "MT-10 Calc",      emoji: "🏍️", x: 840, y: 400 },
   { id: "MacroGeopolitics",label: "Macro & FX",      emoji: "🌐", x: 420, y: 480 },
   { id: "RideScout",       label: "Ride Scout",      emoji: "🌤️", x: 420, y: 0   },
+  { id: "ClaudeAdvisor",   label: "Claude Advisor",  emoji: "🧠", x: 420, y: 580 },
 ];
 
 // ─── Edge definitions (parent → child) ───────────────────────────────────────
@@ -38,6 +39,7 @@ const EDGE_DEFS: Array<{ source: string; target: string }> = [
   { source: "BatteryManager", target: "GridArbitrage"   },
   { source: "FuelScout",      target: "Logistics"       },
   { source: "Logistics",      target: "MT10Calculator"  },
+  { source: "Orchestrator",   target: "ClaudeAdvisor"   },
 ];
 
 function nodeStyle(status: string | undefined) {

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     bike_tank_fill_litres: float = 15.0
     preferred_fuel_type: str = "P98"
 
+    # Anthropic – required for chat and ClaudeAdvisor
+    anthropic_api_key: str = ""
+
     # NSW FuelCheck (optional – fallback to synthetic data if absent)
     nsw_fuelcheck_api_key: str = ""
     nsw_fuelcheck_api_secret: str = ""
