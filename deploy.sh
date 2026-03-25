@@ -230,8 +230,8 @@ deploy_agentcore() {
   local repo="${ECR_BASE}/${AGENTCORE_REPO}"
   ensure_ecr_repo "${AGENTCORE_REPO}"
 
-  info "Building Dockerfile (linux/amd64)…"
-  docker build --platform linux/amd64 -f Dockerfile \
+  info "Building Dockerfile (linux/arm64 – required by AgentCore)…"
+  docker build --platform linux/arm64 -f Dockerfile \
     -t "${AGENTCORE_REPO}:latest" -t "${repo}:latest" .
   docker push "${repo}:latest"
   ok "Pushed ${repo}:latest"
