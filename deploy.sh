@@ -33,7 +33,26 @@ info()  { echo "▶ $*"; }
 ok()    { echo "✓ $*"; }
 error() { echo "✗ $*" >&2; exit 1; }
 
-env_val() { grep "^${1}=" backend/.env 2>/dev/null | cut -d= -f2- || echo ""; }
+# Read a value from backend/.env, stripping surrounding quotes
+env_val() {
+  local raw
+  raw=$(grep "^${1}=" backend/.env 2>/dev/null | cut -d= -f2- || echo "")
+  # Strip leading/trailing single or double quotes
+  raw="${raw%\"}"  ; raw="${raw#\"}"
+  raw="${raw%\'}"  ; raw="${raw#\'}"
+  echo "${raw}"
+}
+
+# Build env-vars JSON safely using jq (handles special chars / quotes in values)
+build_env_json() {
+  jq -n \
+    --arg anthropic     "$(env_val ANTHROPIC_API_KEY)" \
+    --arg fuel_key      "$(env_val NSW_FUELCHECK_API_KEY)" \
+    --arg fuel_secret   "$(env_val NSW_FUELCHECK_API_SECRET)" \
+    '{ANTHROPIC_API_KEY: $anthropic,
+      NSW_FUELCHECK_API_KEY: $fuel_key,
+      NSW_FUELCHECK_API_SECRET: $fuel_secret}'
+}
 
 # ── Shared: ECR login + ensure repo ──────────────────────────────────────────
 ecr_login() {
@@ -133,11 +152,7 @@ deploy_dashboard() {
       \"image\": \"${repo}:latest\",
       \"portMappings\": [{\"containerPort\": 8501, \"protocol\": \"tcp\"}],
       \"essential\": true,
-      \"environment\": [
-        {\"name\": \"ANTHROPIC_API_KEY\",        \"value\": \"$(env_val ANTHROPIC_API_KEY)\"},
-        {\"name\": \"NSW_FUELCHECK_API_KEY\",    \"value\": \"$(env_val NSW_FUELCHECK_API_KEY)\"},
-        {\"name\": \"NSW_FUELCHECK_API_SECRET\", \"value\": \"$(env_val NSW_FUELCHECK_API_SECRET)\"}
-      ],
+      \"environment\": $(build_env_json | jq '[to_entries[] | {name:.key, value:.value}]'),
       \"logConfiguration\": {
         \"logDriver\": \"awslogs\",
         \"options\": {
@@ -228,12 +243,8 @@ deploy_agentcore() {
     --query "agentRuntimes[?agentRuntimeName=='${AGENTCORE_RUNTIME_NAME}'].agentRuntimeId" \
     --output text 2>/dev/null || echo "")
 
-  local env_vars
-  env_vars="{
-    \"ANTHROPIC_API_KEY\":        \"$(env_val ANTHROPIC_API_KEY)\",
-    \"NSW_FUELCHECK_API_KEY\":    \"$(env_val NSW_FUELCHECK_API_KEY)\",
-    \"NSW_FUELCHECK_API_SECRET\": \"$(env_val NSW_FUELCHECK_API_SECRET)\"
-  }"
+  local env_json
+  env_json=$(build_env_json)
 
   if [[ -z "${runtime_id}" || "${runtime_id}" == "None" ]]; then
     info "Creating AgentCore runtime '${AGENTCORE_RUNTIME_NAME}'…"
@@ -243,7 +254,7 @@ deploy_agentcore() {
       --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"${repo}:latest\"}}" \
       --role-arn "${AGENTCORE_ROLE_ARN}" \
       --network-configuration '{"networkMode":"PUBLIC"}' \
-      --environment-variables "${env_vars}" \
+      --environment-variables "${env_json}" \
       | jq '{agentRuntimeId, status}'
     ok "AgentCore runtime created."
   else
@@ -254,7 +265,7 @@ deploy_agentcore() {
       --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"${repo}:latest\"}}" \
       --role-arn "${AGENTCORE_ROLE_ARN}" \
       --network-configuration '{"networkMode":"PUBLIC"}' \
-      --environment-variables "${env_vars}" \
+      --environment-variables "${env_json}" \
       | jq '{agentRuntimeId, status}'
     ok "AgentCore runtime updated."
   fi
